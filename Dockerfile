@@ -1,21 +1,26 @@
 FROM python:3.11-slim
 
-# Set working directory
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Copy and install dependencies
+# Системные зависимости (для catboost нужен libgomp1)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+  && rm -rf /var/lib/apt/lists/*
+
+# Питон-зависимости
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code and model artifacts
-COPY preprocess.py predict.py run.sh ./
+# Код и артефакты модели
+COPY preprocess.py predict.py kafka_worker.py db_writer.py app.py ./
 COPY model.pkl features.json threshold.txt ./
 
-# Ensure run script is executable
-RUN chmod +x run.sh
+# Опционально: порт UI (Streamlit)
+EXPOSE 8501
 
-# Create input and output directories expected for mounting
-RUN mkdir -p /app/input /app/output /app/work
-
-# Default command
-ENTRYPOINT ["/bin/bash", "run.sh"]
+# Никаких жёстких entrypoint'ов: команды задаются в docker-compose
+# Для "пустого" контейнера оставим бездействующий CMD
+CMD ["python", "-c", "import time; time.sleep(3600)"]
