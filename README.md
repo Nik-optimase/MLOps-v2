@@ -1,80 +1,154 @@
-# ML Scoring Service
 
+
+# Fraud Scoring Service
+
+## Описание
+
+Проект реализует потоковый сервис скоринга транзакций с использованием Kafka, PostgreSQL и Streamlit.
+Сервис читает входящие транзакции из Kafka, выполняет препроцессинг и скоринг с помощью модели машинного обучения,
+записывает результаты в Kafka и PostgreSQL, а также предоставляет интерфейс для визуализации результатов.
+
+---
+
+## Архитектура
+
+```
+Kafka topic "transactions"  →  kafka_worker.py  →  Kafka topic "scores"
+                                              ↓
+                                           db_writer.py  →  PostgreSQL (таблица scores)
+                                              ↓
+                                             app.py  →  Streamlit-интерфейс
+```
+
+---
+
+## Компоненты
+
+| Файл                 | Назначение                                                                |
+| -------------------- | ------------------------------------------------------------------------- |
+| `Dockerfile`         | Сборка контейнера со всеми зависимостями                                  |
+| `docker-compose.yml` | Поднимает все сервисы (Kafka, Zookeeper, PostgreSQL, scoring, writer, UI) |
+| `kafka_worker.py`    | Читает транзакции из Kafka, выполняет препроцессинг и скоринг             |
+| `db_writer.py`       | Читает результаты скоринга из Kafka и сохраняет их в PostgreSQL           |
+| `app.py`             | Интерфейс на Streamlit для просмотра результатов                          |
+| `model.pkl`          | Предобученная модель для скоринга                                         |
+| `features.json`      | Список признаков, используемых моделью                                    |
+| `threshold.txt`      | Порог для классификации транзакции как fraud                              |
+| `requirements.txt`   | Список зависимостей Python                                                |
+
+---
+
+## Запуск
+
+### 1. Клонирование репозитория
+
+```bash
+git clone https://github.com/Nik-optimase/MLOps-v2.git
+cd MLOps-v2
+```
+
+### 2. Сборка и запуск контейнеров
+
+```bash
 docker-compose up -d
-# Отправить тестовое сообщение в входной топик (в другом терминале):
+```
+
+После запуска будут подняты сервисы:
+
+* `zookeeper`, `kafka`
+* `postgres`
+* `scoring-service` (воркер для скоринга)
+* `db-writer` (запись результатов в БД)
+* `ui` (интерфейс Streamlit)
+
+### 3. Отправка тестового сообщения в Kafka
+
+```bash
 docker exec -it kafka bash -lc "kafka-console-producer.sh --broker-list kafka:9092 --topic transactions"
-# вставь JSON одной транзакции, Enter
+```
 
-# UI:
+Пример сообщения в формате JSON:
+
+```json
+{"transaction_id": "t_001", "amount": 1200, "latitude": 55.75, "longitude": 37.62, "hour": 14, "device_type": "mobile"}
+```
+
+### 4. Интерфейс
+
+После запуска доступен по адресу:
+
+```
 http://localhost:8501
-
-This repository contains a simple Dockerized service for scoring
-transactions using a machine‑learning model. It is designed as part of
-an assignment to demonstrate how to package an ML model into a
-reproducible container that processes a test dataset and generates
-results in the required Kaggle `sample_submission.csv` format.
-
-## Contents
-
-```
-ml-docker-service/
-├── Dockerfile         # Build instructions for the inference image
-├── requirements.txt   # Python dependencies
-├── run.sh             # Entrypoint that runs the pipeline
-├── preprocess.py      # Data preprocessing script
-├── predict.py         # Model loading and prediction
-├── model.pkl          # Pre‑trained model (dummy classifier in this example)
-├── features.json      # Ordered list of input features for the model
-├── threshold.txt      # Threshold for converting probabilities to class labels
-├── input/             # (mounted) directory for test.csv
-└── output/            # (mounted) directory for results
 ```
 
-The `input` and `output` directories are created inside the container
-but should be mounted from the host so that data can be passed in and
-results collected out.
+Интерфейс позволяет:
 
-## Usage
+* Просматривать последние 10 транзакций с `fraud_flag = 1`
+* Строить гистограмму распределения скорингов для последних 100 транзакций
 
-1. **Build the Docker image**
+---
 
-   ```sh
-   docker build -t ml-service .
-   ```
+## Структура таблицы PostgreSQL
 
-2. **Prepare your test data**
+```sql
+CREATE TABLE scores (
+  transaction_id TEXT PRIMARY KEY,
+  score DOUBLE PRECISION,
+  fraud_flag INT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
 
-   Copy your `test.csv` file into a local directory named `input/`.
+---
 
-3. **Run the container**
+## Логика работы
 
-   ```sh
-   mkdir -p input output
-   # Ensure input/test.csv exists
-   docker run --rm \
-     -v $(pwd)/input:/app/input \
-     -v $(pwd)/output:/app/output \
-     ml-service
-   ```
+1. `kafka_worker.py` считывает транзакции из топика `transactions`.
+2. После препроцессинга формируется вектор признаков в порядке, определенном в `features.json`.
+3. Модель (`model.pkl`) вычисляет вероятность мошенничества (`score`).
+4. Если `score >= threshold.txt`, присваивается `fraud_flag = 1`, иначе `0`.
+5. Результаты отправляются в топик `scores` и затем сохраняются в PostgreSQL.
+6. `app.py` отображает данные из таблицы `scores` в виде таблицы и гистограммы.
 
-   After the container finishes, you will find `sample_submission.csv`
-   (and other optional files) in the `output/` directory.
+---
 
-## Notes
+## Зависимости
 
-* The provided `model.pkl` in this example is a dummy classifier that
-  produces random predictions. In a real scenario you would replace
-  this file with your own trained model and update `features.json` to
-  reflect the exact set of features you used during training.
-* The preprocessing logic in `preprocess.py` replicates the feature
-  engineering done during training (time features and geographic
-  distance). Adjust it as needed for your dataset.
-* `threshold.txt` holds the probability threshold for converting
-  probabilities into class labels. If this file is absent the default
-  of 0.5 is used. Both probabilistic and binary outputs are written
-  to the output directory.
+Все необходимые библиотеки указаны в `requirements.txt`:
 
-## License
+```
+pandas
+numpy
+catboost
+scikit-learn
+kafka-python
+psycopg2-binary
+streamlit
+matplotlib
+```
 
-This repository is provided as part of an assignment. Feel free to
-adapt it for your own use.
+---
+
+## Проверка и отладка
+
+Проверить запущенные контейнеры:
+
+```bash
+docker ps
+```
+
+Посмотреть логи:
+
+```bash
+docker logs scoring-service
+docker logs db-writer
+```
+
+Подключиться к базе данных:
+
+```bash
+docker exec -it postgres psql -U mlops -d fraud
+SELECT * FROM scores LIMIT 10;
+```
+
+
