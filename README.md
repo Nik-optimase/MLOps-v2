@@ -1,5 +1,13 @@
 # ML Scoring Service
 
+docker-compose up -d
+# Отправить тестовое сообщение в входной топик (в другом терминале):
+docker exec -it kafka bash -lc "kafka-console-producer.sh --broker-list kafka:9092 --topic transactions"
+# вставь JSON одной транзакции, Enter
+
+# UI:
+http://localhost:8501
+
 This repository contains a simple Dockerized service for scoring
 transactions using a machine‑learning model. It is designed as part of
 an assignment to demonstrate how to package an ML model into a
